@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "agent-browser": {
+      "url": "https://agent-browser-mcp-server.vercel.app/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AGENT_BROWSER_MCP_AUTH_TOKEN}"
+      }
+    }
+  }
+}
