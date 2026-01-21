@@ -32,6 +32,7 @@ interface BrowserSession {
   localStorage: Record<string, string>
   lastSnapshot?: string
   refs?: Record<string, { role: string; name: string; selector: string }>
+  httpCredentials?: { username: string; password: string }
   createdAt: number
   updatedAt: number
 }
@@ -85,10 +86,18 @@ async function launchBrowser(): Promise<Browser> {
   throw new Error('BROWSERLESS_URL or BROWSERLESS_TOKEN environment variable is required for cloud browser. Get a free API key at https://browserless.io')
 }
 
-async function setupPage(browser: Browser, session: BrowserSession | null): Promise<{ context: BrowserContext; page: Page }> {
+async function setupPage(
+  browser: Browser, 
+  session: BrowserSession | null,
+  httpCredentials?: { username: string; password: string }
+): Promise<{ context: BrowserContext; page: Page }> {
+  // Use credentials from parameter, session, or none
+  const credentials = httpCredentials || session?.httpCredentials
+  
   const context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    httpCredentials: credentials,
   })
   
   // Restore cookies if session exists
@@ -111,7 +120,13 @@ async function setupPage(browser: Browser, session: BrowserSession | null): Prom
   return { context, page }
 }
 
-async function extractSessionData(context: BrowserContext, page: Page, sessionId: string, refs?: Record<string, { role: string; name: string; selector: string }>): Promise<BrowserSession> {
+async function extractSessionData(
+  context: BrowserContext, 
+  page: Page, 
+  sessionId: string, 
+  refs?: Record<string, { role: string; name: string; selector: string }>,
+  httpCredentials?: { username: string; password: string }
+): Promise<BrowserSession> {
   const cookies = await context.cookies()
   const url = page.url()
   
@@ -146,6 +161,7 @@ async function extractSessionData(context: BrowserContext, page: Page, sessionId
     })),
     localStorage,
     refs,
+    httpCredentials,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
@@ -207,12 +223,21 @@ async function getAccessibilitySnapshot(page: Page): Promise<{ snapshot: string;
 const tools: Tool[] = [
   {
     name: 'browser_open',
-    description: 'URLを開いてブラウザセッションを開始します。セッションIDが返されるので、以降の操作で使用してください。',
+    description: 'URLを開いてブラウザセッションを開始します。セッションIDが返されるので、以降の操作で使用してください。Basic認証が必要なサイトの場合はbasic_authを指定してください。',
     inputSchema: {
       type: 'object',
       properties: {
         url: { type: 'string', description: '開くURL' },
         session_id: { type: 'string', description: '既存のセッションID（任意）。指定すると前回のCookies/localStorageを復元します' },
+        basic_auth: {
+          type: 'object',
+          description: 'Basic認証の資格情報（任意）。ユーザー名とパスワードを指定します',
+          properties: {
+            username: { type: 'string', description: 'ユーザー名' },
+            password: { type: 'string', description: 'パスワード' },
+          },
+          required: ['username', 'password'],
+        },
       },
       required: ['url'],
     },
@@ -348,15 +373,19 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         if (!url) throw new Error('url is required')
         
         const existingSessionId = args?.session_id as string | undefined
+        const basicAuth = args?.basic_auth as { username: string; password: string } | undefined
         let session = existingSessionId ? await getSession(existingSessionId) : null
         
+        // Use credentials from parameter or existing session
+        const httpCredentials = basicAuth || session?.httpCredentials
+        
         browser = await launchBrowser()
-        const { context, page } = await setupPage(browser, session)
+        const { context, page } = await setupPage(browser, session, httpCredentials)
         
         await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 })
         
         const sessionId = existingSessionId || randomUUID()
-        const newSession = await extractSessionData(context, page, sessionId)
+        const newSession = await extractSessionData(context, page, sessionId, undefined, httpCredentials)
         await saveSession(newSession)
         
         // Capture data before closing browser
@@ -390,14 +419,14 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         if (!targetUrl) throw new Error('No URL available')
         
         browser = await launchBrowser()
-        const { context, page } = await setupPage(browser, session)
+        const { context, page } = await setupPage(browser, session, session?.httpCredentials)
         
         await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 })
         
         const { snapshot, refs } = await getAccessibilitySnapshot(page)
         
         const newSessionId = sessionId || randomUUID()
-        const newSession = await extractSessionData(context, page, newSessionId, refs)
+        const newSession = await extractSessionData(context, page, newSessionId, refs, session?.httpCredentials)
         newSession.lastSnapshot = snapshot
         await saveSession(newSession)
         
@@ -435,7 +464,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         if (!targetUrl) throw new Error('No URL available')
         
         browser = await launchBrowser()
-        const { context, page } = await setupPage(browser, session)
+        const { context, page } = await setupPage(browser, session, session?.httpCredentials)
         
         await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 })
         
@@ -454,7 +483,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {})
         
         const newSessionId = sessionId || randomUUID()
-        const newSession = await extractSessionData(context, page, newSessionId)
+        const newSession = await extractSessionData(context, page, newSessionId, undefined, session?.httpCredentials)
         await saveSession(newSession)
         
         const pageUrl = page.url()
@@ -490,7 +519,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         if (!targetUrl) throw new Error('No URL available')
         
         browser = await launchBrowser()
-        const { context, page } = await setupPage(browser, session)
+        const { context, page } = await setupPage(browser, session, session?.httpCredentials)
         
         await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 })
         
@@ -508,7 +537,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         await page.locator(targetSelector).fill(value, { timeout: 10000 })
         
         const newSessionId = sessionId || randomUUID()
-        const newSession = await extractSessionData(context, page, newSessionId)
+        const newSession = await extractSessionData(context, page, newSessionId, undefined, session?.httpCredentials)
         await saveSession(newSession)
         
         const pageUrl = page.url()
@@ -545,7 +574,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         if (!targetUrl) throw new Error('No URL available')
         
         browser = await launchBrowser()
-        const { context, page } = await setupPage(browser, session)
+        const { context, page } = await setupPage(browser, session, session?.httpCredentials)
         
         await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 })
         
@@ -569,7 +598,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         }
         
         const newSessionId = sessionId || randomUUID()
-        const newSession = await extractSessionData(context, page, newSessionId)
+        const newSession = await extractSessionData(context, page, newSessionId, undefined, session?.httpCredentials)
         await saveSession(newSession)
         
         const pageUrl = page.url()
@@ -603,7 +632,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         if (!targetUrl) throw new Error('No URL available')
         
         browser = await launchBrowser()
-        const { context, page } = await setupPage(browser, session)
+        const { context, page } = await setupPage(browser, session, session?.httpCredentials)
         
         await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 })
         
@@ -621,7 +650,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         const text = await page.locator(targetSelector).textContent({ timeout: 10000 })
         
         const newSessionId = sessionId || randomUUID()
-        const newSession = await extractSessionData(context, page, newSessionId)
+        const newSession = await extractSessionData(context, page, newSessionId, undefined, session?.httpCredentials)
         await saveSession(newSession)
         
         await browser.close()
@@ -650,7 +679,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         if (!targetUrl) throw new Error('No URL available')
         
         browser = await launchBrowser()
-        const { context, page } = await setupPage(browser, session)
+        const { context, page } = await setupPage(browser, session, session?.httpCredentials)
         
         await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 })
         
@@ -661,7 +690,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         })
         
         const newSessionId = sessionId || randomUUID()
-        const newSession = await extractSessionData(context, page, newSessionId)
+        const newSession = await extractSessionData(context, page, newSessionId, undefined, session?.httpCredentials)
         await saveSession(newSession)
         
         const pageUrl = page.url()
@@ -702,7 +731,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         if (!targetUrl) throw new Error('No URL available')
         
         browser = await launchBrowser()
-        const { context, page } = await setupPage(browser, session)
+        const { context, page } = await setupPage(browser, session, session?.httpCredentials)
         
         await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 })
         
@@ -719,7 +748,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         }
         
         const newSessionId = sessionId || randomUUID()
-        const newSession = await extractSessionData(context, page, newSessionId)
+        const newSession = await extractSessionData(context, page, newSessionId, undefined, session?.httpCredentials)
         await saveSession(newSession)
         
         const pageUrl = page.url()
@@ -752,7 +781,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         if (!targetUrl) throw new Error('No URL available')
         
         browser = await launchBrowser()
-        const { context, page } = await setupPage(browser, session)
+        const { context, page } = await setupPage(browser, session, session?.httpCredentials)
         
         await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 })
         
@@ -760,7 +789,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
         
         const newSessionId = sessionId || randomUUID()
-        const newSession = await extractSessionData(context, page, newSessionId)
+        const newSession = await extractSessionData(context, page, newSessionId, undefined, session?.httpCredentials)
         await saveSession(newSession)
         
         const pageUrl = page.url()
