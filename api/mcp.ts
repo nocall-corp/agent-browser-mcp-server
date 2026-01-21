@@ -359,6 +359,10 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         const newSession = await extractSessionData(context, page, sessionId)
         await saveSession(newSession)
         
+        // Capture data before closing browser
+        const pageUrl = page.url()
+        const pageTitle = await page.title()
+        
         await browser.close()
         
         return {
@@ -367,8 +371,8 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
             text: JSON.stringify({
               success: true,
               session_id: sessionId,
-              url: page.url(),
-              title: await page.title(),
+              url: pageUrl,
+              title: pageTitle,
               message: existingSessionId ? 'セッションを復元してページを開きました' : '新しいセッションでページを開きました',
             }, null, 2),
           }],
@@ -397,6 +401,8 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         newSession.lastSnapshot = snapshot
         await saveSession(newSession)
         
+        const pageUrl = page.url()
+        
         await browser.close()
         
         return {
@@ -405,7 +411,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
             text: JSON.stringify({
               success: true,
               session_id: newSessionId,
-              url: page.url(),
+              url: pageUrl,
               snapshot,
               refs: Object.fromEntries(
                 Object.entries(refs).map(([k, v]) => [k, { role: v.role, name: v.name }])
@@ -451,6 +457,8 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         const newSession = await extractSessionData(context, page, newSessionId)
         await saveSession(newSession)
         
+        const pageUrl = page.url()
+        
         await browser.close()
         
         return {
@@ -459,7 +467,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
             text: JSON.stringify({
               success: true,
               session_id: newSessionId,
-              url: page.url(),
+              url: pageUrl,
               message: `クリックしました: ${ref || selector}`,
             }, null, 2),
           }],
@@ -503,6 +511,8 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         const newSession = await extractSessionData(context, page, newSessionId)
         await saveSession(newSession)
         
+        const pageUrl = page.url()
+        
         await browser.close()
         
         return {
@@ -511,7 +521,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
             text: JSON.stringify({
               success: true,
               session_id: newSessionId,
-              url: page.url(),
+              url: pageUrl,
               message: `入力しました: ${ref || selector}`,
             }, null, 2),
           }],
@@ -562,6 +572,8 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         const newSession = await extractSessionData(context, page, newSessionId)
         await saveSession(newSession)
         
+        const pageUrl = page.url()
+        
         await browser.close()
         
         return {
@@ -570,7 +582,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
             text: JSON.stringify({
               success: true,
               session_id: newSessionId,
-              url: page.url(),
+              url: pageUrl,
               message: `タイプしました: ${text}${submit ? ' (送信済み)' : ''}`,
             }, null, 2),
           }],
@@ -652,6 +664,8 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         const newSession = await extractSessionData(context, page, newSessionId)
         await saveSession(newSession)
         
+        const pageUrl = page.url()
+        
         await browser.close()
         
         return {
@@ -661,7 +675,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
               text: JSON.stringify({
                 success: true,
                 session_id: newSessionId,
-                url: page.url(),
+                url: pageUrl,
               }, null, 2),
             },
             {
@@ -708,6 +722,8 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         const newSession = await extractSessionData(context, page, newSessionId)
         await saveSession(newSession)
         
+        const pageUrl = page.url()
+        
         await browser.close()
         
         return {
@@ -716,7 +732,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
             text: JSON.stringify({
               success: true,
               session_id: newSessionId,
-              url: page.url(),
+              url: pageUrl,
               message: waitResult,
             }, null, 2),
           }],
@@ -747,6 +763,8 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
         const newSession = await extractSessionData(context, page, newSessionId)
         await saveSession(newSession)
         
+        const pageUrl = page.url()
+        
         await browser.close()
         
         return {
@@ -755,7 +773,7 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
             text: JSON.stringify({
               success: true,
               session_id: newSessionId,
-              url: page.url(),
+              url: pageUrl,
               message: `キー "${key}" を押しました`,
             }, null, 2),
           }],
