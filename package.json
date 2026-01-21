@@ -1,0 +1,30 @@
+{
+  "name": "agent-browser-mcp-server",
+  "version": "1.0.0",
+  "description": "Agent Browser MCP Server - Vercel HTTP Transport with Session Management",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "mcp",
+    "browser",
+    "automation",
+    "playwright",
+    "vercel"
+  ],
+  "author": "nocall",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "@sparticuz/chromium": "^131.0.1",
+    "@vercel/kv": "^3.0.0",
+    "playwright-core": "^1.49.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.16",
+    "@vercel/node": "^5.0.2",
+    "typescript": "^5.8.2"
+  }
+}
