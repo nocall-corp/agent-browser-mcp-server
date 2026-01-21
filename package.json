@@ -19,7 +19,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.1",
     "@vercel/kv": "^3.0.0",
-    "playwright-core": "^1.49.1"
+    "playwright-core": "1.56.0"
   },
   "devDependencies": {
     "@types/node": "^20.17.16",
