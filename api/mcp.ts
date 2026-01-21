@@ -1,10 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
+import { Tool } from '@modelcontextprotocol/sdk/types.js'
 import { randomUUID } from 'node:crypto'
-import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { CallToolRequestSchema, ListToolsRequestSchema, Tool } from '@modelcontextprotocol/sdk/types.js'
-import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { kv } from '@vercel/kv'
 import { chromium as playwright, Browser, Page, BrowserContext } from 'playwright-core'
 
@@ -799,31 +795,6 @@ async function executeTool(name: string, args: Record<string, unknown> | undefin
   }
 }
 
-// MCP Server class
-class AgentBrowserMCPServer {
-  private server: Server
-
-  constructor() {
-    this.server = new Server({ name: 'agent-browser-mcp-server', version: '1.0.0' }, { capabilities: { tools: {} } })
-    this.setupHandlers()
-  }
-
-  private setupHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }))
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: params } = request.params
-      return executeTool(name, params)
-    })
-  }
-
-  async connect(transport: Transport) {
-    await this.server.connect(transport)
-  }
-}
-
-// Map to store transports by session ID
-const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {}
-
 // Authentication helper
 function authenticate(req: VercelRequest, res: VercelResponse): boolean {
   if (requireAuth && authTokens.length === 0) {
@@ -859,6 +830,44 @@ function authenticate(req: VercelRequest, res: VercelResponse): boolean {
   return true
 }
 
+// JSON-RPC request handler for serverless environment
+async function handleJsonRpcRequest(body: any, sessionId: string | undefined): Promise<{ result?: any; error?: any; newSessionId?: string }> {
+  const { method, params, id } = body
+
+  switch (method) {
+    case 'initialize':
+      const newSessionId = sessionId || randomUUID()
+      return {
+        result: {
+          protocolVersion: '2024-11-05',
+          capabilities: { tools: {} },
+          serverInfo: { name: 'agent-browser-mcp-server', version: '1.0.0' }
+        },
+        newSessionId
+      }
+
+    case 'notifications/initialized':
+      // Just acknowledge the notification
+      return {}
+
+    case 'tools/list':
+      return { result: { tools } }
+
+    case 'tools/call':
+      if (!params?.name) {
+        return { error: { code: -32602, message: 'Invalid params: missing tool name' } }
+      }
+      const toolResult = await executeTool(params.name, params.arguments || {})
+      return { result: toolResult }
+
+    case 'ping':
+      return { result: {} }
+
+    default:
+      return { error: { code: -32601, message: `Method not found: ${method}` } }
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
@@ -874,109 +883,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     if (req.method === 'POST') {
       const sessionId = req.headers['mcp-session-id'] as string | undefined
-      let transport: StreamableHTTPServerTransport
+      const body = req.body
+      const requestId = body?.id
 
-      // In serverless environment, create transport for each request
-      // The session ID is used for browser session management in KV, not for transport persistence
-      if (sessionId && transports[sessionId]) {
-        // Reuse existing transport if available (same instance)
-        transport = transports[sessionId]
-      } else if (sessionId) {
-        // Session ID provided but transport not found (different serverless instance)
-        // Create new transport and initialize it internally
-        transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => sessionId,
-          onsessioninitialized: (sid) => {
-            transports[sid] = transport
-          }
-        })
+      // Handle JSON-RPC request directly (serverless-friendly approach)
+      const response = await handleJsonRpcRequest(body, sessionId)
 
-        transport.onclose = () => {
-          if (transport.sessionId) {
-            delete transports[transport.sessionId]
-          }
-        }
+      // If this was an initialize request, set the session ID header
+      if (response.newSessionId) {
+        res.setHeader('mcp-session-id', response.newSessionId)
+      }
 
-        const mcpServer = new AgentBrowserMCPServer()
-        await mcpServer.connect(transport)
-        
-        // If this is not an initialize request, we need to initialize the session first
-        // by processing a mock initialize request
-        if (!isInitializeRequest(req.body)) {
-          const mockInitReq = {
-            jsonrpc: '2.0',
-            id: '__internal_init__',
-            method: 'initialize',
-            params: {
-              protocolVersion: '2024-11-05',
-              capabilities: {},
-              clientInfo: { name: 'serverless-reinit', version: '1.0.0' }
-            }
-          }
-          
-          // Create a mock response that discards the output
-          const mockRes = {
-            statusCode: 200,
-            headers: {} as Record<string, string>,
-            setHeader: (key: string, value: string) => { mockRes.headers[key] = value },
-            writeHead: () => mockRes,
-            write: () => true,
-            end: () => {},
-            on: () => mockRes,
-            once: () => mockRes,
-            emit: () => true,
-            getHeader: () => undefined,
-            removeHeader: () => {},
-            flushHeaders: () => {},
-          }
-          
-          await transport.handleRequest(mockInitReq as any, mockRes as any, mockInitReq)
-        }
-      } else if (isInitializeRequest(req.body)) {
-        // New session initialization
-        transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (sid) => {
-            transports[sid] = transport
-          }
-        })
+      // For notifications (no id), don't send a response body
+      if (requestId === undefined || requestId === null) {
+        res.status(200).end()
+        return
+      }
 
-        transport.onclose = () => {
-          if (transport.sessionId) {
-            delete transports[transport.sessionId]
-          }
-        }
+      // Send SSE-formatted response for compatibility
+      res.setHeader('Content-Type', 'text/event-stream')
+      res.setHeader('Cache-Control', 'no-cache')
 
-        const mcpServer = new AgentBrowserMCPServer()
-        await mcpServer.connect(transport)
-      } else {
-        res.status(400).json({
+      if (response.error) {
+        const errorResponse = {
           jsonrpc: '2.0',
-          error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
-          id: null
-        })
-        return
+          error: response.error,
+          id: requestId
+        }
+        res.write(`event: message\ndata: ${JSON.stringify(errorResponse)}\n\n`)
+      } else if (response.result !== undefined) {
+        const successResponse = {
+          jsonrpc: '2.0',
+          result: response.result,
+          id: requestId
+        }
+        res.write(`event: message\ndata: ${JSON.stringify(successResponse)}\n\n`)
       }
+      res.end()
 
-      await transport.handleRequest(req as any, res as any, req.body)
-    } else if (req.method === 'GET' || req.method === 'DELETE') {
-      const sessionId = req.headers['mcp-session-id'] as string | undefined
-      if (!sessionId) {
-        res.status(400).send('Missing session ID')
-        return
-      }
-      // For serverless, create transport if not exists
-      if (!transports[sessionId]) {
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => sessionId,
-          onsessioninitialized: (sid) => {
-            transports[sid] = transport
-          }
-        })
-        const mcpServer = new AgentBrowserMCPServer()
-        await mcpServer.connect(transport)
-      }
-      await transports[sessionId].handleRequest(req as any, res as any)
+    } else if (req.method === 'GET') {
+      // SSE endpoint - not supported in serverless
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'SSE not supported in serverless environment. Use POST requests.' },
+        id: null
+      })
+    } else if (req.method === 'DELETE') {
+      // Session cleanup - not needed in serverless
+      res.status(200).json({ success: true })
     } else {
       res.status(405).json({
         jsonrpc: '2.0',
