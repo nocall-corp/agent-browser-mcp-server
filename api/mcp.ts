@@ -883,7 +883,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         transport = transports[sessionId]
       } else if (sessionId) {
         // Session ID provided but transport not found (different serverless instance)
-        // Create new transport with the existing session ID
+        // Create new transport and initialize it internally
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => sessionId,
           onsessioninitialized: (sid) => {
@@ -899,6 +899,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const mcpServer = new AgentBrowserMCPServer()
         await mcpServer.connect(transport)
+        
+        // If this is not an initialize request, we need to initialize the session first
+        // by processing a mock initialize request
+        if (!isInitializeRequest(req.body)) {
+          const mockInitReq = {
+            jsonrpc: '2.0',
+            id: '__internal_init__',
+            method: 'initialize',
+            params: {
+              protocolVersion: '2024-11-05',
+              capabilities: {},
+              clientInfo: { name: 'serverless-reinit', version: '1.0.0' }
+            }
+          }
+          
+          // Create a mock response that discards the output
+          const mockRes = {
+            statusCode: 200,
+            headers: {} as Record<string, string>,
+            setHeader: (key: string, value: string) => { mockRes.headers[key] = value },
+            writeHead: () => mockRes,
+            write: () => true,
+            end: () => {},
+            on: () => mockRes,
+            once: () => mockRes,
+            emit: () => true,
+            getHeader: () => undefined,
+            removeHeader: () => {},
+            flushHeaders: () => {},
+          }
+          
+          await transport.handleRequest(mockInitReq as any, mockRes as any, mockInitReq)
+        }
       } else if (isInitializeRequest(req.body)) {
         // New session initialization
         transport = new StreamableHTTPServerTransport({
