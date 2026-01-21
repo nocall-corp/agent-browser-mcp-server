@@ -6,8 +6,11 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { CallToolRequestSchema, ListToolsRequestSchema, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { kv } from '@vercel/kv'
-import chromium from '@sparticuz/chromium'
 import { chromium as playwright, Browser, Page, BrowserContext } from 'playwright-core'
+
+// Browserless.io configuration
+const BROWSERLESS_URL = process.env.BROWSERLESS_URL // e.g., wss://chrome.browserless.io?token=YOUR_TOKEN
+const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN
 
 const authTokens = [process.env.MCP_AUTH_TOKEN, process.env.AUTH_TOKEN].filter(
   (t): t is string => typeof t === 'string' && t.length > 0
@@ -68,15 +71,17 @@ async function deleteSession(sessionId: string): Promise<void> {
 
 // Browser management
 async function launchBrowser(): Promise<Browser> {
-  const executablePath = await chromium.executablePath()
+  // Use Browserless.io cloud browser if configured
+  const browserlessUrl = BROWSERLESS_URL || (BROWSERLESS_TOKEN ? `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}` : null)
   
-  const browser = await playwright.launch({
-    args: chromium.args,
-    executablePath,
-    headless: true,
-  })
+  if (browserlessUrl) {
+    console.log('Connecting to cloud browser...')
+    const browser = await playwright.connectOverCDP(browserlessUrl)
+    return browser
+  }
   
-  return browser
+  // Fallback to local chromium (for local development)
+  throw new Error('BROWSERLESS_URL or BROWSERLESS_TOKEN environment variable is required for cloud browser. Get a free API key at https://browserless.io')
 }
 
 async function setupPage(browser: Browser, session: BrowserSession | null): Promise<{ context: BrowserContext; page: Page }> {

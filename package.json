@@ -18,7 +18,6 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.1",
-    "@sparticuz/chromium": "^131.0.1",
     "@vercel/kv": "^3.0.0",
     "playwright-core": "^1.49.1"
   },

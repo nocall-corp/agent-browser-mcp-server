@@ -19,12 +19,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const hasLegacyAuthToken = !!process.env.AUTH_TOKEN
   const hasKvUrl = !!process.env.KV_REST_API_URL
   const hasKvToken = !!process.env.KV_REST_API_TOKEN
+  const hasBrowserlessUrl = !!process.env.BROWSERLESS_URL
+  const hasBrowserlessToken = !!process.env.BROWSERLESS_TOKEN
+  const browserConfigured = hasBrowserlessUrl || hasBrowserlessToken
   const requireAuth =
     process.env.REQUIRE_AUTH === 'true' ||
     (process.env.REQUIRE_AUTH !== 'false' && process.env.VERCEL_ENV === 'production')
 
   res.status(200).json({
-    status: 'ok',
+    status: browserConfigured ? 'ok' : 'warning',
     server: 'agent-browser-mcp-server',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
@@ -33,8 +36,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       auth_token_configured: hasMcpAuthToken || hasLegacyAuthToken,
       legacy_auth_token_configured: hasLegacyAuthToken,
       kv_configured: hasKvUrl && hasKvToken,
+      browserless_configured: browserConfigured,
       require_auth: requireAuth,
       vercel_env: process.env.VERCEL_ENV ?? null,
     },
+    message: !browserConfigured ? 'BROWSERLESS_URL or BROWSERLESS_TOKEN is required for browser automation. Get a free API key at https://browserless.io' : undefined,
   })
 }
