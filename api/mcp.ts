@@ -72,11 +72,16 @@ async function deleteSession(sessionId: string): Promise<void> {
 // Browser management
 async function launchBrowser(): Promise<Browser> {
   // Use Browserless.io cloud browser if configured
-  const browserlessUrl = BROWSERLESS_URL || (BROWSERLESS_TOKEN ? `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}` : null)
+  if (BROWSERLESS_TOKEN) {
+    const browserlessWsUrl = `wss://production-sfo.browserless.io/chromium/playwright?token=${BROWSERLESS_TOKEN}`
+    console.log('Connecting to Browserless cloud browser via Playwright...')
+    const browser = await playwright.connect(browserlessWsUrl)
+    return browser
+  }
   
-  if (browserlessUrl) {
-    console.log('Connecting to cloud browser...')
-    const browser = await playwright.connectOverCDP(browserlessUrl)
+  if (BROWSERLESS_URL) {
+    console.log('Connecting to custom browser endpoint...')
+    const browser = await playwright.connect(BROWSERLESS_URL)
     return browser
   }
   
