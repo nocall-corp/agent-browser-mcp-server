@@ -876,9 +876,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const sessionId = req.headers['mcp-session-id'] as string | undefined
       let transport: StreamableHTTPServerTransport
 
+      // In serverless environment, create transport for each request
+      // The session ID is used for browser session management in KV, not for transport persistence
       if (sessionId && transports[sessionId]) {
+        // Reuse existing transport if available (same instance)
         transport = transports[sessionId]
-      } else if (!sessionId && isInitializeRequest(req.body)) {
+      } else if (sessionId) {
+        // Session ID provided but transport not found (different serverless instance)
+        // Create new transport with the existing session ID
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => sessionId,
+          onsessioninitialized: (sid) => {
+            transports[sid] = transport
+          }
+        })
+
+        transport.onclose = () => {
+          if (transport.sessionId) {
+            delete transports[transport.sessionId]
+          }
+        }
+
+        const mcpServer = new AgentBrowserMCPServer()
+        await mcpServer.connect(transport)
+      } else if (isInitializeRequest(req.body)) {
+        // New session initialization
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
@@ -906,9 +928,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await transport.handleRequest(req as any, res as any, req.body)
     } else if (req.method === 'GET' || req.method === 'DELETE') {
       const sessionId = req.headers['mcp-session-id'] as string | undefined
-      if (!sessionId || !transports[sessionId]) {
-        res.status(400).send('Invalid or missing session ID')
+      if (!sessionId) {
+        res.status(400).send('Missing session ID')
         return
+      }
+      // For serverless, create transport if not exists
+      if (!transports[sessionId]) {
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => sessionId,
+          onsessioninitialized: (sid) => {
+            transports[sid] = transport
+          }
+        })
+        const mcpServer = new AgentBrowserMCPServer()
+        await mcpServer.connect(transport)
       }
       await transports[sessionId].handleRequest(req as any, res as any)
     } else {
